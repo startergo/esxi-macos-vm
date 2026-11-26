@@ -27,6 +27,7 @@ this page is the same procedure, reorganised and annotated.
 - [Helper script](#helper-script)
 - [Notes](#notes)
 - [Status of the unlocker](#status-of-the-unlocker)
+- [On a real Mac](#on-a-real-mac)
 - [ESXi licensing today](#esxi-licensing-today)
 - [Sources](#sources)
 - [Credits and license](#credits-and-license)
@@ -48,6 +49,10 @@ Tested by the author on **ESXi 7.0 U3g (build 20328353)** and **8.0 (build 20513
 **macOS Monterey 12.6.2** and **Ventura 13.1**. Host hardware: Gigabyte GA-Z170X-Gaming 3,
 Intel Core i7-6700K, 32 GB RAM, PowerColor Red Devil RX 480 8 GB, Intel I210-T1 network card.
 
+He still runs it: in November 2026 he recommended the setup in English on MacRumors, as a way
+to run macOS releases newer than Monterey on a Mac Pro (2013) — with the caveat that he has not
+tried it on that machine. See [On a real Mac](#on-a-real-mac).
+
 **How it works, in four sentences.** ESXi can run macOS guests, but only exposes that guest
 type on Apple hardware; the *unlocker* switches it on. With the real GPU handed to the VM,
 macOS loads its own AMD driver for it, so there is nothing to patch in the guest. Two VMX
@@ -59,7 +64,8 @@ the keyboard and mouse alone, so the VM can have them.
 
 - **Apple's license.** The macOS software license agreement only permits running macOS in
   virtual machines on Apple-branded hardware. Running it on other hardware, as a “Hackintosh”
-  does, is a matter between you and Apple. See [Credits and license](#credits-and-license).
+  does, is a matter between you and Apple. See [Credits and license](#credits-and-license);
+  on a real Mac the question does not arise — see [On a real Mac](#on-a-real-mac).
 - **The unlocker patches ESXi.** It modifies files VMware ships, in a way VMware does not
   support. Use a host you can afford to reinstall, and read [Status of the unlocker](#status-of-the-unlocker).
 - **Two steps take away your screens.** Step 9 blanks the ESXi console (DCUI) and step 12
@@ -67,6 +73,9 @@ the keyboard and mouse alone, so the VM can have them.
   Screen Sharing to the guest both work.
 - **Back up before every reboot.** Put the host in maintenance mode first, as the author
   stresses, and keep a copy of every file you edit (`esxi-pt.sh` does that for you).
+- **Which ESXi.** The procedure is verified on ESXi 7.0 U3 only. If you are starting from the
+  free 8.0 U3e — the only ESXi Broadcom gives away today — its licence suits this guide, but no
+  unlocker is known to work on it, so step 2 is open. See [Choosing the ESXi version](#choosing-the-esxi-version).
 - **What is verified.** Parts 1–3 are the original author's procedure, and only his. The
   command-line alternatives, the *Undo* section and the background notes were added here and
   are marked as such. The helper script was tested in sandboxes only — see
@@ -80,10 +89,14 @@ versions matter:
 
 | ESXi version | For this guide |
 | --- | --- |
-| **7.0 U3** (the author's: U3g, build 20328353) | **The safe choice.** Both generations of the unlocker target ESXi 7, and 7.0.x is the last release line in which VMware supported Mac hardware at all (Broadcom KB 313785). |
+| **7.0 U3** (the author's: U3g, build 20328353) | **The safe choice.** Both generations of the unlocker target ESXi 7, and 7.0.x is the last release line in which VMware supported Mac hardware at all (Broadcom KB 313785). Its free licence is no longer issued: a new installation starts with 60 days of evaluation. |
 | 8.0 (build 20513097) | Worked for the author. Keep the VM's compatibility at **ESXi 7.0 U2**, which his VMs use. |
-| 8.0 U1 – U3, including the free 8.0 U3e | Not known to work. The README of the Unlocker 4 mirror reports that macOS guests stop booting on updated ESXi 8 hosts unless the VMs stay at 7.0 U2 compatibility, and keyboard passthrough has unresolved reports on 8.0 U2/U3. |
+| 8.0 U1 – U3, commercial builds | Not known to work on an unpatched installation. The README of the Unlocker 4 mirror reports that macOS guests stop booting on updated ESXi 8 hosts unless the VMs stay at 7.0 U2 compatibility, and keyboard passthrough has unresolved reports on 8.0 U2/U3. One user reports Unlocker 3 on 8.0 U2 with a 7.0 U2 VM. |
+| **8.0 U3e, the free hypervisor** (build 24677879) | **The licence is no obstacle; the macOS guest is.** Nothing in this guide needs a paid licence, and the author's VM has exactly the 8 vCPUs the free one allows. But it is an 8.0 U3 build, so the row above applies. Details under [ESXi licensing today](#esxi-licensing-today). |
 | 9.x | No unlocker is known to work. |
+
+Where the versions come from: ESXi 7.0 and the commercial 8.0 builds are downloads that need an
+entitlement on the Broadcom Support Portal. The free 8.0 U3e is the exception.
 
 The author recommends checking the [VMware compatibility guide](https://compatibilityguide.broadcom.com/)
 for your hardware before you start — that is why he added a cheap Intel I210-T1 network card
@@ -119,6 +132,10 @@ See [Choosing the ESXi version](#choosing-the-esxi-version). Afterwards, in the 
 (`https://<host>/ui`), create a datastore and enable SSH under **Host → Actions → Services →
 Enable Secure Shell (SSH)**. Every host-side command below is run in an SSH session on the host.
 The author works with a single datastore named `VM Storage`.
+
+If you installed the free 8.0 U3e, look at **Host → Manage → Licensing** first: it has to read
+*vSphere 8 Hypervisor* with the expiration date *Never*. Evaluation mode there means the
+licence was not taken over, see [ESXi licensing today](#esxi-licensing-today).
 
 ### 2. Apply the ESXi unlocker
 
@@ -411,7 +428,9 @@ system_profiler SPUSBDataType
 [`scripts/esxi-pt.sh`](scripts/esxi-pt.sh) does the file editing of this guide on the ESXi host:
 the kernel boot options, the passthrough switch, the three USB edits and the VMX parameters. It
 shows every change before writing it, asks for confirmation, keeps a backup of each file, and is
-written for ESXi's own shell (BusyBox `ash`, no Python, no bash).
+written for ESXi's own shell (BusyBox `ash`, no Python, no bash). It also reads the host's
+licence and warns before a VM gets more vCPUs than the licence allows — 8 with the free
+hypervisor.
 
 ```sh
 scp scripts/esxi-pt.sh root@esxi:/vmfs/volumes/datastore1/
@@ -428,14 +447,19 @@ sh /vmfs/volumes/datastore1/esxi-pt.sh status
 | Part 3, 1 | `esxi-pt.sh usb list` |
 | Part 3, 2–4 | `esxi-pt.sh usb host-allow …`, `esxi-pt.sh usb host-ignore …`, `esxi-pt.sh vmx usb …` |
 | 12, 15–16 | `esxi-pt.sh vmx gpu … --rom …`, `esxi-pt.sh vmx set …` |
+| Licence | `esxi-pt.sh license`, `esxi-pt.sh license set KEY` |
 
 `--dry-run` shows what a command would do without touching anything. Details are in
 [`scripts/README.md`](scripts/README.md).
 
-**How far it is tested.** The script's logic runs against fake `esxcli` and `lsusb` commands in
-a sandbox, with 279 checks that pass under BusyBox (ESXi's shell), dash, bash and three `awk`
-implementations. **It has not been run on a live ESXi host yet** — the commands it issues are
-the ones documented above, but treat your first run as a test and start with `--dry-run`.
+**How far it is tested.** The script's logic runs against fake `esxcli`, `lsusb` and `vim-cmd`
+commands in a sandbox, with 375 checks that pass under BusyBox (ESXi's shell), dash, bash and
+three `awk` implementations. **It has not been run on a live ESXi host yet.** The commands it
+issues are the ones documented above plus Broadcom's two licence commands
+([KB 428537](https://knowledge.broadcom.com/external/article/428537/verify-esxi-host-license-information-fro.html),
+[KB 381426](https://knowledge.broadcom.com/external/article/381426/assigning-esxi-license-to-esxi-host-fail.html)),
+and the licence reports the tests are modelled on come from public screenshots. Treat your
+first run as a test and start with `--dry-run`.
 
 ## Notes
 
@@ -503,7 +527,18 @@ What applies to both generations:
   not work with it enabled.
 - **ESXi 7 is the supported target.** The author also ran it on ESXi 8.0 with VMs at 7.0 U2
   compatibility. The Unlocker 4 mirror reports that macOS guests stop booting on updated ESXi 8
-  hosts unless VMs are kept that way. Nothing is known to work on ESXi 8.0 U1 or later, or on 9.x.
+  hosts unless VMs are kept that way. Nothing is known to work on a stock ESXi 8.0 U1 or later,
+  or on 9.x. The one exception is a user who reports Unlocker 3 on 8.0 U2 with a 7.0 U2 VM, and
+  poor performance (comment on the mirror's [issue #2](https://github.com/netgc/esxi-unlocker-4/issues/2)).
+- **Pre-patched installers exist. They are not a recommendation.** The READMEs of both mirrors
+  link to sysin.org, which distributes ESXi 8.0 U3 installer images with the unlocker built in.
+  That shows it can be done on 8.0 U3 — but a hypervisor image from an unofficial source cannot
+  be checked, and this guide does without it.
+- **OC4VM on ESXi: one report.** In September 2026 a user wrote on OC4VM's issue tracker that his
+  macOS VM boots on an unpatched ESXi 8.0 U3e — the free hypervisor — once the OpenCore image is
+  attached as a disk rather than as an ISO ([DrDonk/OC4VM#104](https://github.com/DrDonk/OC4VM/issues/104)).
+  DrDonk replied that ESXi is not supported and that the next version returns to disk images.
+  One report, a Big Sur guest, no passthrough: a lead, not a procedure.
 - **VMware has moved on.** ESXi 7.0.x is the last release that supports Apple Mac hardware,
   and VMware Tools for macOS are in maintenance mode (Broadcom KB 313785). The provenance of
   the final `darwin.iso` is documented in a
@@ -514,32 +549,115 @@ repository is alive (v4.2.8, May 2026), but it is the unlocker for **Workstation
 on Windows and Linux: it has no ESXi target and does not patch an ESXi host. Its README points
 to [OC4VM](https://github.com/DrDonk/OC4VM), an OpenCore image that runs macOS guests in Fusion
 and Workstation without patching anything — and OC4VM's README states that ESXi is not
-supported. For an ESXi host, Unlocker 3 or 4 on ESXi 7 remains the only known way.
+supported. For an ESXi host, Unlocker 3 or 4 on ESXi 7 remains the only way that more than
+one person has reported.
+
+## On a real Mac
+
+*(Added here.)* The guide assumes an ordinary PC, which is why it needs the unlocker. On a Mac
+two things are different, and neither is verified here.
+
+- **Apple's licence is satisfied.** macOS may run in virtual machines on Apple-branded hardware.
+- **ESXi 7.0 offers macOS guests without the unlocker — on the Macs it supported.** Those are
+  the Mac Pro 6,1 (2013) and the Mac mini 6,2 (2012) and 7,1 (2014); Broadcom KB 313785 names
+  7.0.x as their last release. The unlocker only switches on what, in the words of its README,
+  “are normally exposed in Fusion and ESXi when running on Apple hardware”. On a Mac VMware
+  never supported, the Mac Pro 7,1 (2019), users needed the unlocker all the same: macOS guests
+  stopped with `DSMOS: SMC read error` until it was installed (comments on William Lam's
+  [GPU passthrough post](https://williamlam.com/2020/12/gpu-passthrough-with-esxi-on-the-apple-2019-mac-pro-71.html)
+  and a [Broadcom community thread](https://community.broadcom.com/vmware-cloud-foundation/discussion/unable-to-install-macos-guest-on-to-esxi-70u2a-host-apple-hardware)).
+  So on a supported Mac under 7.0, step 2 can be skipped.
+- **ESXi 8.0 is not supported on any Mac, but installs on several.** William Lam installed it on
+  Mac minis from 2011 and 2018 — the newer one only with a boot option — and readers reported
+  Mac minis from 2012 and 2014 and Mac Pros from 2013 and 2019
+  ([vSphere 8 on Apple Mac Hardware](https://williamlam.com/2022/10/vsphere-8-on-apple-mac-hardware.html)).
+  The Ivy Bridge processors of the Mac mini 6,2 and of the Mac Pro 6,1 are on vSphere 8's list
+  of unsupported CPUs, so the installer stops with `CPU_SUPPORT ERROR` unless the boot option
+  `allowLegacyCPU=true` is given
+  ([Homelab considerations for vSphere 8](https://williamlam.com/2022/09/homelab-considerations-for-vsphere-8.html)).
+  Whether a macOS guest boots on such a host is not published anywhere I found; the Mac Pro 7,1
+  users who tried on 8.0 reported boot loops.
+
+**The author's view, November 2026.** In the MacRumors thread
+*[eGPU working on Linux and Windows (MacPro 6,1 / MacPro 2013)](https://forums.macrumors.com/threads/egpu-working-on-linux-and-windows-macpro-6-1-macpro-2013.2488015/?post=34976634#post-34976634)*
+he suggested his setup as the better way to use the GPUs of a 2013 Mac Pro. He has not tried it
+on that machine, but expects ESXi 8 to run there because his own cluster contains dual-socket
+hosts with the same CPUs; the GPUs, he writes, would need testing. He still uses the system
+today to run macOS releases newer than Monterey, the last one for that Mac, in VMs.
+
+**What that means for a Mac Pro 6,1 today.** The version this guide is verified on, 7.0 U3,
+needs a licence key that Broadcom no longer gives away, and macOS guests on the free 8.0 U3e
+are unverified. That is the open end of this guide for real Macs; reports are welcome.
 
 ## ESXi licensing today
 
 The original thread dates from January 2023. Since then:
 
-- In February 2024 Broadcom withdrew the free hypervisor the author refers to.
-- In 2025 a free **VMware vSphere Hypervisor** returned, tied to **ESXi 8.0 Update 3e**
-  (build 24677879). It is pre-licensed — it does not start in evaluation mode — and is limited
-  to 8 vCPUs per VM and 2 physical CPUs per host, to the Host Client (no vCenter), and to
-  running VMs in place: no vMotion, HA, DRS or VADP backups, and no support
-  ([Broadcom KB 399823](https://knowledge.broadcom.com/external/article/399823/vmware-esxi-80-update-3e-now-available-a.html)).
-- Other installations start in evaluation mode and run unrestricted for 60 days before a key
-  is needed, as the author describes.
+- In February 2024 Broadcom withdrew the free hypervisor the author refers to (KB 2107518, no
+  longer online; [Born City's report](https://borncity.com/win/2024/02/13/free-vsphere-hypervisor-esxi-7-x-and-8-x-end-of-general-availability/)).
+  Keys issued before remain valid; new ones are not issued.
+- In April 2025 a free **VMware vSphere Hypervisor** returned — as a separate image of
+  **ESXi 8.0 Update 3e, build 24677879**. The commercial 8.0 U3e is build 24674464
+  ([build list](https://www.virten.net/vmware/esxi-release-build-number-history)).
+- Any other installation starts in evaluation mode and runs unrestricted for 60 days before a
+  key is needed, as the author describes.
 - Current releases are ESXi 9.1.2 and 8.0 U3m (November 2026), see
   [Broadcom KB 316595](https://knowledge.broadcom.com/external/article/316595/build-numbers-and-versions-of-vmware-esx.html).
 
-The free tier's limits do not get in the way of this guide — the author's VM uses exactly
-8 vCPUs. The catch is elsewhere: the free hypervisor is 8.0 U3e, which is not a version this
-guide is known to work on.
+### The free 8.0 U3e
+
+**Where.** Broadcom Support Portal → **My Downloads** → *Free Software Downloads available
+HERE* → **VMware vSphere Hypervisor** → **8.0U3e** → accept the terms. The file is
+`VMware-VMvisor-Installer-8.0U3e-24677879.x86_64.iso`; a free Broadcom account is enough
+([Broadcom KB 399823](https://knowledge.broadcom.com/external/article/399823/vmware-esxi-80-update-3e-now-available-a.html)).
+
+**Fresh install, not an upgrade.** The image carries its licence key, so a fresh installation
+normally comes up as *vSphere 8 Hypervisor* with the expiration date *Never*. A host that is
+*upgraded* to this image does not get the key: it runs in evaluation mode, and after 60 days it
+no longer powers on VMs. A few posters in the
+[Broadcom community thread](https://community.broadcom.com/vmware-cloud-foundation/discussion/license-key-for-the-free-edition-of-vmware-esxi-80u3e)
+on the key ran into evaluation mode even after a fresh install, so looking under
+**Host → Manage → Licensing** right after the installation is the first thing to do. What the
+posters confirmed to help: install the image once more, even in a VM, read the key there and
+assign it to the other host — the key is also posted in the thread. Whether Broadcom's terms
+allow that outside its own image is for you to judge.
+
+In the shell, `esxi-pt.sh license` shows the state, and `esxi-pt.sh license set KEY` assigns a
+key.
+
+**What the licence allows**
+([Broadcom KB 399823](https://knowledge.broadcom.com/external/article/399823/vmware-esxi-80-update-3e-now-available-a.html),
+[release notes](https://techdocs.broadcom.com/us/en/vmware-cis/vsphere/vsphere/8-0/release-notes/esxi-update-and-patch-release-notes/vsphere-esxi-80u3e-release-notes.html)):
+
+| Limit | For this guide |
+| --- | --- |
+| 8 vCPUs per VM; a larger VM fails to power on with *There are insufficient licenses to complete this operation* | The author's VM has exactly 8. `esxi-pt.sh status` lists the VMs above the limit. |
+| Host Client only, no vCenter | Every step is a Host Client step anyway, and the note about not editing the VMX behind vCenter's back does not apply. |
+| Remote vSphere API read-only | Nothing here uses it: the script runs in the ESXi Shell over SSH, which is not restricted. |
+| No vMotion, HA, DRS or VADP backups; no support; “for non-production use” | None of it is used. |
+
+Broadcom KB 399823 also lists up to 2 physical CPUs per host; the release notes mention only
+the 8 vCPUs.
+
+**Patches.** 8.0 U3e is the only free image; the later 8.0 U3 releases are not. Whether a free
+host may be patched to them is nothing Broadcom has spelled out; [one guide](https://bazwise.com/how-to-update-esxi-free-2026/)
+describes taking the depot from the portal's free section and applying it with `esxcli`. If a
+host then reports *License key has expired* although its licence never expires, that is a known
+defect of ESXi 8.0 U3 up to U3g, fixed in U3h
+([Broadcom KB 389204](https://knowledge.broadcom.com/external/article/389204/error-license-key-has-expired-license-ex.html)):
+`touch /etc/vmware/license.cfg`, then `vim-cmd vimsvc/license --show`, refreshes it.
+
+**The catch for this guide.** The free tier's limits do not get in the way — the author's VM
+uses exactly 8 vCPUs. The catch is elsewhere: the free hypervisor is an 8.0 U3 build, and no
+unlocker is known to work on a stock 8.0 U3 host, see
+[Status of the unlocker](#status-of-the-unlocker).
 
 ## Sources
 
 **The original**
 
 - eldxmgw, *[Howto: VMware ESXi Hackintosh Host mit Passthrough RX480 und Eingabegeräte](https://www.hackintosh-forum.de/forum/thread/57423-howto-vmware-esxi-hackintosh-host-mit-passthrough-rx480-und-eingabegeräte/)*, hackintosh-forum.de, 7 January 2023 — with 18 screenshots
+- eldxmgw, [post in a MacRumors thread on eGPUs for the Mac Pro 2013](https://forums.macrumors.com/threads/egpu-working-on-linux-and-windows-macpro-6-1-macpro-2013.2488015/?post=34976634#post-34976634), November 2026 — recommending the setup for that Mac
 - [English translation of the whole thread](docs/translation.md)
 
 **ESXi passthrough and USB**
@@ -558,12 +676,22 @@ guide is known to work on.
 - Broadcom KB [313785](https://knowledge.broadcom.com/external/article/313785/discontinuation-of-support-for-apple-mac.html) — end of Mac platform support
 - [`DrDonk/unlocker`](https://github.com/DrDonk/unlocker) — the Workstation/Player unlocker; still maintained, and the source of the notes on the deprecation of macOS guests
 - [OC4VM — OpenCore for VMware](https://github.com/DrDonk/OC4VM) — macOS guests for Fusion and Workstation without patching; ESXi not supported
+- [DrDonk/OC4VM#104](https://github.com/DrDonk/OC4VM/issues/104) — one report of an OC4VM guest booting on an unpatched ESXi 8.0 U3e
+- [netgc/esxi-unlocker-4#2](https://github.com/netgc/esxi-unlocker-4/issues/2) — Unlocker 4 failing on ESXi 8.0; a user on Unlocker 3 and 8.0 U2
+- Broadcom community, *[Boot Loop in macOS Ventura on ESXi 8 Hardware Profile](https://community.broadcom.com/vmware-cloud-foundation/discussion/boot-loop-in-in-macos-ventura-on-esxi-8-hardware-profile)*
+- William Lam, *[vSphere 8 on Apple Mac Hardware](https://williamlam.com/2022/10/vsphere-8-on-apple-mac-hardware.html)*, *[Homelab considerations for vSphere 8](https://williamlam.com/2022/09/homelab-considerations-for-vsphere-8.html)* (unsupported CPUs), *[GPU passthrough with ESXi on the Apple 2019 Mac Pro 7,1](https://williamlam.com/2020/12/gpu-passthrough-with-esxi-on-the-apple-2019-mac-pro-71.html)* (unlocker needed on an unsupported Mac)
 
 **Licensing**
 
-- Broadcom KB [399823](https://knowledge.broadcom.com/external/article/399823/vmware-esxi-80-update-3e-now-available-a.html) (free 8.0 U3e), [316595](https://knowledge.broadcom.com/external/article/316595/build-numbers-and-versions-of-vmware-esx.html) (build numbers)
+- Broadcom KB [399823](https://knowledge.broadcom.com/external/article/399823/vmware-esxi-80-update-3e-now-available-a.html) (free 8.0 U3e), [428537](https://knowledge.broadcom.com/external/article/428537/verify-esxi-host-license-information-fro.html) (read the licence from the shell), [381426](https://knowledge.broadcom.com/external/article/381426/assigning-esxi-license-to-esxi-host-fail.html) (assign one from the shell), [389204](https://knowledge.broadcom.com/external/article/389204/error-license-key-has-expired-license-ex.html) (*License key has expired*), [316595](https://knowledge.broadcom.com/external/article/316595/build-numbers-and-versions-of-vmware-esx.html) (build numbers)
+- [VMware ESXi 8.0 Update 3e Release Notes](https://techdocs.broadcom.com/us/en/vmware-cis/vsphere/vsphere/8-0/release-notes/esxi-update-and-patch-release-notes/vsphere-esxi-80u3e-release-notes.html)
+- virten.net, *[VMware ESXi Release and Build Number History](https://www.virten.net/vmware/esxi-release-build-number-history)* — the two builds of 8.0 U3e
 - Broadcom community, *[License key for the free edition of VMware ESXi 8.0U3e](https://community.broadcom.com/vmware-cloud-foundation/discussion/license-key-for-the-free-edition-of-vmware-esxi-80u3e)*
+- Nakivo, *[Free ESXi: Restrictions and Limitations](https://www.nakivo.com/blog/free-vmware-esxi-restrictions-limitations)* — the two installer images, the licence in the Host Client and in the shell
+- Virtualization Howto, *[VMware ESXi Free Edition Available Again with 8.0U3e](https://www.virtualizationhowto.com/2025/04/vmware-esxi-free-edition-available-again-with-8-0u3e-download-now/)*, *[Install the New VMware ESXi Free Edition Custom ISOs and Limitations](https://www.virtualizationhowto.com/2025/04/install-the-new-vmware-esxi-free-edition-custom-isos-and-limitations/)*
+- Born City, *[Free vSphere Hypervisor (ESXi 7.x and 8.x) End of General Availability](https://borncity.com/win/2024/02/13/free-vsphere-hypervisor-esxi-7-x-and-8-x-end-of-general-availability/)* (February 2024)
 - Network World, *[VMware quietly brings back its free ESXi hypervisor](https://www.networkworld.com/article/3964957/vmware-quietly-brings-back-its-free-esxi-hypervisor.html)*
+- Bazwise, *[How to update VMware ESXi free 8.0 Update 3e](https://bazwise.com/how-to-update-esxi-free-2026/)*
 - [Apple software license agreements](https://www.apple.com/legal/sla/)
 
 ## Credits and license

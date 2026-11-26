@@ -3,8 +3,8 @@
 # Test-suite for scripts/esxi-pt.sh
 #
 # Runs on any Unix with a POSIX sh. The script under test is pointed at a
-# sandbox root (--root) and at fake esxcli / lsusb binaries, so nothing on
-# this machine, and nothing on any ESXi host, is touched.
+# sandbox root (--root) and at fake esxcli / lsusb / vim-cmd binaries, so
+# nothing on this machine, and nothing on any ESXi host, is touched.
 #
 #   sh tests/run.sh                                             system sh
 #   dash tests/run.sh                                           dash
@@ -47,9 +47,12 @@ modules=jumpstrt.gz --- useropts.gz --- features.gz --- k.b00 --- uc_intel.b00 -
 build=7.0.3-0.55.20328353
 updated=1
 EOF
-    rm -f "$SB/state/"* "$SB/"*.log "$SB/bootbank/"*.bak.* "$SB/etc/vmware/"*.bak.*
+    rm -f "$SB/state/"* "$SB/"*.log "$SB/bootbank/"*.bak.* "$SB/etc/vmware/"*.bak.* \
+        "$SB"/license-report.bak.*
+    rm -rf "$SB/vmfs/volumes/datastore1/Big VM"
     : > "$SB/esxcli.log"
     : > "$SB/pt.log"
+    : > "$SB/vimcmd.log"
 }
 
 reset_vmx() {
@@ -95,12 +98,22 @@ echo "esxcli $*" >> "$ESXI_PT_TEST_SB/esxcli.log"
 state() { cat "$ESXI_PT_TEST_SB/state/$1" 2>/dev/null || echo "$2"; }
 case "$*" in
     "system version get")
-        cat <<'X'
-Product: VMware ESXi
-Version: 7.0.3
-Build: 20328353
-Update: 3
-Patch: 67
+        # Layout of ESXi 7.0 and 8.0: the Build line carries 'Releasebuild-'
+        cat <<X
+   Product: VMware ESXi
+   Version: $(state version 7.0.3)
+   Build: Releasebuild-$(state build 20328353)
+   Update: $(state update 3)
+   Patch: $(state patch 67)
+X
+        ;;
+    "hardware platform get")
+        cat <<X
+Platform Information
+   Domain ID: 0
+   Vendor: $(state vendor 'Gigabyte Technology Co., Ltd.')
+   Product Name: $(state model Z170X-Gaming 3)
+   Serial Number: $(state serial 161602316001)
 X
         ;;
     "system settings kernel list")
@@ -218,7 +231,125 @@ can't get device qualifier: Resource temporarily unavailable
 X
 EOF
 
-chmod +x "$SB/bin/esxcli" "$SB/bin/lsusb"
+# The licence reports are modelled on real ones: the free hypervisor 8 and the
+# evaluation mode of ESXi 8.0U3e (Nakivo; eclair; Broadcom KB 428537) and the
+# answer of a refused key (Broadcom KB 381426). The key is a placeholder.
+cat > "$SB/bin/vim-cmd" <<'EOF'
+#!/bin/sh
+# fake vim-cmd: logs every call and answers the licence commands
+echo "vim-cmd $*" >> "$ESXI_PT_TEST_SB/vimcmd.log"
+state() { cat "$ESXI_PT_TEST_SB/state/$1" 2>/dev/null || echo "$2"; }
+ACCEPTED=AAAAA-BBBBB-CCCCC-DDDDD-EEEEE    # is assigned, and turns the host "free"
+REFUSED=NOCOR-ES000-00000-00000-00000     # too few core licences
+case "$*" in
+    "vimsvc/license --show")
+        case "$(state license paid)" in
+            none) echo "vim-cmd: Failed to connect to hostd" >&2; exit 1 ;;
+            free) cat <<X
+[200] Sending request for installed licenses...[200] Complete, result is:
+   serial: $(state licenseKey "$ACCEPTED")
+   vmodl key: esx.hypervisor.cpuPackageUnlimited
+   name: vSphere 8 Hypervisor
+   total: 138
+   used: 1
+   unit: cpuPackage32Core
+   Properties:
+   [ProductName] = VMware ESX Server
+   [ProductVersion] = 8.0
+   [feature] = vsmp:8 ("Up to 8-way virtual SMP")
+   [feature] = vimapi ("vSphere API")
+X
+                ;;
+            eval) cat <<X
+[200] Sending request for installed licenses...[200] Complete, result is:
+   serial: 00000-00000-00000-00000-00000
+   vmodl key: eval
+   name: Evaluation Mode
+   total: 1
+   used: 1
+   unit: host
+   Properties:
+   [ProductName] = VMware ESX Server
+   [ProductVersion] = 8.0
+   [evaluation] = License has not been set, evaluation Period in effect.
+   [expirationHours] = 1008
+   [expirationMinutes] = 0
+   [expirationDate] = $(state licenseExpiry 2099-12-31T00:00:00Z)
+   [system_time] = 2026-11-26T20:00:00.000000Z
+   [feature] = vsmp:0 ("Unlimited virtual SMP")
+   [feature] = vimapi ("vSphere API")
+X
+                ;;
+            flat) cat <<X
+[200] Sending request for installed licenses...[200] Complete, result is:
+serial: $(state licenseKey "$ACCEPTED")
+vmodl key: esx.vcf.cpuCoreMin
+name: vSphere 8 Enterprise Plus for VCF
+total: 192
+used: 32
+unit: cpuCore
+Properties:
+[ProductName] = VMware ESX Server
+[ProductVersion] = 8.0
+[feature] = vsmp:0 ("Unlimited virtual SMP")
+[expirationDate] = 2028-07-15T00:00:00Z
+X
+                ;;
+            *) cat <<X
+[200] Sending request for installed licenses...[200] Complete, result is:
+   serial: $(state licenseKey "$ACCEPTED")
+   vmodl key: esx.enterprisePlus.cpuCore
+   name: VMware vSphere 7 Enterprise Plus
+   total: 32
+   used: 32
+   unit: cpuCore
+   Properties:
+   [ProductName] = VMware ESX Server
+   [ProductVersion] = 7.0
+   [feature] = vsmp:0 ("Unlimited virtual SMP")
+   [feature] = vimapi ("vSphere API")
+X
+                ;;
+        esac
+        ;;
+    "vimsvc/license --set="*)
+        key=${2#--set=}
+        if [ "$key" = "$REFUSED" ]; then
+            cat <<X
+[200] Sending request for installed licenses...[200] Complete, result is:
+   serial: $key
+   vmodl key: esx.standard.cpuCoreMin
+   name: vSphere 8 Standard (Subscription)
+   total: 0
+   used: 0
+   unit:
+   Properties:
+   [diagnostic] = Insufficient number of per cpu core licenses. At least 32 are currently required, but only 16 provided.
+   [ProductName] = VMware ESX Server
+   [ProductVersion] = 8.0
+   [license_not_set] = 1
+   [feature] = vsmp:0 ("Unlimited virtual SMP")
+Result: FAILURE
+X
+        else
+            echo "$key" > "$ESXI_PT_TEST_SB/state/licenseKey"
+            echo free > "$ESXI_PT_TEST_SB/state/license"
+            cat <<X
+   serial: $key
+   vmodl key: esx.hypervisor.cpuPackageUnlimited
+   name: vSphere 8 Hypervisor
+Result: SUCCESS
+X
+        fi
+        ;;
+    *)
+        echo "fake vim-cmd: unexpected arguments: $*" >&2
+        exit 1
+        ;;
+esac
+EOF
+
+chmod +x "$SB/bin/esxcli" "$SB/bin/lsusb" "$SB/bin/vim-cmd"
 PATH="$SB/bin:$PATH"
 
 # ---------------------------------------------------------------- harness --
@@ -269,6 +400,21 @@ vhas()    { if grep -qF -- "$1" "$VMX" 2>/dev/null; then pass; else fail "the VM
 vhasnt()  { if grep -qF -- "$1" "$VMX" 2>/dev/null; then fail "the VMX should not contain: $1"; else pass; fi; }
 loghas()  { if grep -qF -- "$1" "$SB/esxcli.log"; then pass; else fail "esxcli was not called with: $1"; fi; }
 usbloghas() { if grep -qF -- "$1" "$SB/lsusb.log"; then pass; else fail "lsusb was not called with: $1"; fi; }
+vimloghas() { if grep -qF -- "$1" "$SB/vimcmd.log"; then pass; else fail "vim-cmd was not called with: $1"; fi; }
+
+# set_license MODE : the licence of the sandbox host from now on - paid (what
+# a reset gives), free, eval, flat (a report without indentation) or none
+set_license() {
+    echo "$1" > "$SB/state/license"
+}
+
+# no_licbak : no backup of a licence report exists
+no_licbak() {
+    for _f in "$SB"/license-report.bak.*; do
+        if [ -e "$_f" ]; then fail "unexpected backup of a licence report: $_f"; return 0; fi
+    done
+    pass
+}
 
 # oldest_backup DIR NAME -> the oldest NAME.bak.* file in DIR (exit 1 if there is none).
 # A glob expands in sorted order, so the first match is the oldest.
@@ -329,6 +475,7 @@ has "pci on|off ADDRESS"
 has "usb host-allow ID..."
 has "usb host-ignore ID..."
 has "vmx gpu VMX --rom FILE"
+has "license set KEY"
 
 t "no command is a usage error"
 run
@@ -357,8 +504,8 @@ reset_host
 t "status of an untouched host"
 run status
 ok_rc
-hasre 'Version:[ ]+7\.0\.3'
-hasre 'Build:[ ]+20328353'
+hasre 'Version: +7\.0\.3'
+hasre 'Build: +Releasebuild-20328353'
 has "disableACSCheck = FALSE"
 has "vga = TRUE"
 has "autoPartition=FALSE"
@@ -383,6 +530,173 @@ printf 'usb.quirks.device0 = "0x05ac:0x0250 allow"\n' >> "$SB/etc/vmware/config"
 run status
 ok_rc
 has "usb.quirks.device0 = \"0x05ac:0x0250 allow\""
+
+section "licence: the free hypervisor and evaluation mode"
+
+reset_host
+t "status shows the licence and never prints a key in full"
+run status
+ok_rc
+has "== Licence =="
+hasre 'Edition: +VMware vSphere 7 Enterprise Plus'
+has "AAAAA-#####-#####-#####-EEEEE"
+hasnt "AAAAA-BBBBB-CCCCC-DDDDD-EEEEE"
+hasre 'Expires: +never'
+hasre 'vCPUs per VM: +unlimited'
+hasnt "cannot be powered on"
+hasnt "WARNING"
+
+t "status recognises the free hypervisor and its 8 vCPUs per VM"
+set_license free
+echo 8.0.3 > "$SB/state/version"
+echo 24677879 > "$SB/state/build"
+echo 70 > "$SB/state/patch"
+run status
+ok_rc
+hasre 'Build: +Releasebuild-24677879'
+has "build 24677879 is the image of the free VMware vSphere Hypervisor (ESXi 8.0 U3e)."
+hasre 'Edition: +vSphere 8 Hypervisor'
+hasre 'vCPUs per VM: +8'
+has "== Virtual machines with more than 8 vCPUs (they cannot be powered on) =="
+has "    (none)"
+hasnt "WARNING"
+
+t "status lists the VMs above the limit of the licence"
+mkdir -p "$SB/vmfs/volumes/datastore1/Big VM"
+printf 'displayName = "Big"\nnumvcpus = "12"\n' > "$SB/vmfs/volumes/datastore1/Big VM/Big.vmx"
+run status
+ok_rc
+has "$SB/vmfs/volumes/datastore1/Big VM/Big.vmx  (12 vCPUs)"
+has "WARNING: these VMs exceed the 8 vCPUs that the licence allows per VM."
+hasnt "OSX Monterey.vmx  (8 vCPUs)"
+
+t "a VM without a numvcpus line is left out of that list"
+printf 'displayName = "Odd"\n' > "$SB/vmfs/volumes/datastore1/Big VM/Big.vmx"
+run status
+ok_rc
+has "    (none)"
+hasnt "Odd.vmx"
+
+t "status warns about evaluation mode and counts the days"
+set_license eval
+echo 2099-12-31T00:00:00Z > "$SB/state/licenseExpiry"
+run status
+ok_rc
+hasre 'Edition: +Evaluation Mode'
+has "00000-#####-#####-#####-00000"
+hasre 'Expires: +2099-12-31 \(in [0-9]+ days\)'
+hasre 'WARNING: evaluation mode: the host runs without limits until 2099-12-31 \(in [0-9]+ days\)\.'
+has "Host > Manage > Licensing > Assign license, or with 'esxi-pt.sh license set KEY'."
+
+t "status reports an evaluation period that is over"
+echo 2020-01-01T00:00:00Z > "$SB/state/licenseExpiry"
+run status
+ok_rc
+hasre 'Expires: +2020-01-01 \([0-9]+ days ago\)'
+has "WARNING: the evaluation period ended on 2020-01-01: no VM can be powered on until a licence is assigned."
+
+t "status still works when vim-cmd gives no answer"
+set_license none
+run status
+ok_rc
+has "Licence:       not determined"
+
+t "status names Apple hardware"
+set_license paid
+echo 'Apple Inc.' > "$SB/state/vendor"
+echo MacPro6,1 > "$SB/state/model"
+run status
+ok_rc
+has "Apple hardware (MacPro6,1)"
+
+section "license"
+
+reset_host
+t "license prints the licence with its capacity"
+set_license free
+run license
+ok_rc
+hasre 'Edition: +vSphere 8 Hypervisor'
+hasre 'Capacity: +1 of 138 cpuPackage32Core in use'
+hasre 'vCPUs per VM: +8'
+has "A VM with more than 8 vCPUs cannot be powered on with this licence."
+has "This is the free hypervisor licence"
+hasnt "WARNING"
+
+t "license reads a report without indentation"
+set_license flat
+run license
+ok_rc
+hasre 'Edition: +vSphere 8 Enterprise Plus for VCF'
+hasre 'Capacity: +32 of 192 cpuCore in use'
+hasre 'Expires: +2028-07-15 \(in [0-9]+ days\)'
+hasnt "A VM with more than"
+
+t "license without an answer says so"
+set_license none
+run license
+ok_rc
+has "not determined"
+
+t "license set rejects anything that is not a key"
+set_license eval
+: > "$SB/vimcmd.log"
+run --yes license set not-a-key
+fail_rc
+has "does not look like an ESXi licence key"
+run --yes license set 'AAAAA-BBBBB-CCCCC-DDDDD-EE#EE'
+fail_rc
+has "does not look like an ESXi licence key"
+eq "$(cat "$SB/vimcmd.log")" ""
+
+t "license set --dry-run changes nothing"
+: > "$SB/vimcmd.log"
+run --dry-run license set aaaaa-bbbbb-ccccc-ddddd-eeeee
+ok_rc
+has "Edition:       Evaluation Mode"
+has "[dry run] would run: vim-cmd vimsvc/license --set=AAAAA-#####-#####-#####-EEEEE"
+has "[dry run] nothing was changed."
+eq "$(cat "$SB/vimcmd.log")" "vim-cmd vimsvc/license --show"
+eq "$(cat "$SB/state/licenseKey" 2>/dev/null)" ""
+no_licbak
+
+t "license set assigns the key and keeps a copy of the previous licence"
+run --yes license set aaaaa-bbbbb-ccccc-ddddd-eeeee
+ok_rc
+has "Licence in use now:"
+has "Key to assign: AAAAA-#####-#####-#####-EEEEE"
+has "[ok] licence assigned."
+hasre 'Edition: +vSphere 8 Hypervisor'
+has "A VM with more than 8 vCPUs cannot be powered on with this licence."
+vimloghas "vim-cmd vimsvc/license --set=AAAAA-BBBBB-CCCCC-DDDDD-EEEEE"
+eq "$(cat "$SB/state/licenseKey")" "AAAAA-BBBBB-CCCCC-DDDDD-EEEEE"
+BAK=$(oldest_backup "$SB" license-report) && grep -qF 'serial: 00000-00000-00000-00000-00000' "$BAK"
+eq $? 0
+
+t "declining at the prompt leaves the licence alone"
+set_license eval
+: > "$SB/vimcmd.log"
+run_stdin n license set aaaaa-bbbbb-ccccc-ddddd-eeeee
+fail_rc
+has "Aborted - nothing was changed."
+eq "$(grep -c 'license --set=' "$SB/vimcmd.log")" 0
+eq "$(cat "$SB/state/license")" eval
+
+t "license set reports a key the host refuses"
+run --yes license set nocor-es000-00000-00000-00000
+fail_rc
+has "[diagnostic] = Insufficient number of per cpu core licenses."
+has "the key was not applied"
+has "Host > Manage > Licensing > Assign license."
+eq "$(cat "$SB/state/license")" eval
+
+t "license set of the key already in use is a no-op"
+set_license free
+: > "$SB/vimcmd.log"
+run --yes license set AAAAA-BBBBB-CCCCC-DDDDD-EEEEE
+ok_rc
+has "nothing to do - this key is already assigned."
+eq "$(grep -c 'license --set=' "$SB/vimcmd.log")" 0
 
 section "kernel boot options (guide steps 8 and 9)"
 
@@ -699,7 +1013,31 @@ has 'pciPassthru1.deviceId = "0xaaf0"'
 has 'svga.present = "TRUE"'
 has 'guestOS = "darwin21-64"'
 has 'ethernet0.virtualDev = "vmxnet3"'
+has 'numvcpus = "8"'
 hasnt 'memSize'
+
+t "vmx show and vmx set warn when a VM has more vCPUs than the licence allows"
+reset_vmx
+reset_host
+set_license free
+run vmx show "$VMX"
+ok_rc
+hasnt "WARNING"
+run --yes vmx set "$VMX" numvcpus 12
+ok_rc
+has "WARNING: with 12 vCPUs the VM will not power on - this licence allows 8 per VM."
+vhas 'numvcpus = "12"'
+run vmx show "$VMX"
+ok_rc
+has "WARNING: $VMX has 12 vCPUs, but this licence allows 8 per VM - the VM will not power on."
+
+t "with no limit on vCPUs nothing is warned about"
+reset_vmx
+set_license paid
+run --yes vmx set "$VMX" numvcpus 16
+ok_rc
+hasnt "WARNING"
+vhas 'numvcpus = "16"'
 
 t "vmx get reads a value"
 run vmx get "$VMX" svga.present

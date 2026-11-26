@@ -327,6 +327,8 @@ Perhaps this overview helps a little: <https://www.ubackup.com/enterprise-backup
 
 > *TN (Nov 2026): the licensing situation changed after this was written — see [ESXi licensing today](../README.md#esxi-licensing-today) in the README.*
 
+> *TN (Nov 2026): the author returned to the subject in English in November 2026, in a [thread on MacRumors about eGPUs on the Mac Pro 2013](https://forums.macrumors.com/threads/egpu-working-on-linux-and-windows-macpro-6-1-macpro-2013.2488015/?post=34976634#post-34976634), and wrote that he still uses the system described here — see [On a real Mac](../README.md#on-a-real-mac).*
+
 ---
 
 ## Links to the original screenshots

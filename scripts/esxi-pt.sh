@@ -6,6 +6,11 @@
 # Runs in the ESXi Shell or over SSH on the ESXi host itself, as root. Written
 # for ESXi's BusyBox ash: POSIX sh only. Start with:  sh esxi-pt.sh --help
 #
+# Nothing here needs a paid licence: the commands run in the ESXi Shell, which
+# the free "vSphere Hypervisor" licence (ESXi 8.0 U3e) leaves unrestricted.
+# The script reads the licence all the same, because it decides how many
+# vCPUs a VM may have, and warns before a VM exceeds that.
+#
 # Commands that change something show a preview first and ask for
 # confirmation; --dry-run only previews. Every edited file is backed up.
 # Exit status: 0 = done, anything else = error or declined at the prompt.
@@ -25,6 +30,7 @@ ROOT=                  # prefix for /etc and /bootbank (used by the test-suite)
 HOST_CONFIG=/etc/vmware/config
 BOOTCFG=/bootbank/boot.cfg
 DATASTORES=/vmfs/volumes
+FREE_BUILD=24677879    # ESXi 8.0 U3e image with the embedded free licence
 TMPFILES=
 TMPN=0
 TMPF=
@@ -35,9 +41,13 @@ usage() {
 Usage: $PROG [options] COMMAND [arguments]
 
 Commands:
-  status [--all]           Host version, VMkernel boot options, kernelopt line,
-                           usb.quirks and the passthrough-capable PCI devices
-                           (--all lists every PCI device; PT = passthrough on)
+  status [--all]           Host version and licence, VMkernel boot options,
+                           kernelopt line, usb.quirks and the passthrough-
+                           capable PCI devices (--all lists every PCI device;
+                           PT = passthrough on)
+  license                  Licence: edition, expiry date, vCPUs allowed per VM
+  license set KEY          Assign a licence key to the host, e.g. the free
+                           hypervisor key (five groups of five characters)
   acs-check on|off         VMkernel.Boot.disableACSCheck   (off = guide step 8)
   vga-console on|off       VMkernel.Boot.vga, the DCUI console (off = guide step 9)
   pci list                 The PCI device table of 'status'
@@ -47,7 +57,7 @@ Commands:
   usb host-allow ID...     /etc/vmware/config:  usb.quirks.deviceN = "0xID allow"
   usb host-ignore ID...    /bootbank/boot.cfg:   CONFIG./USB/quirks=... in kernelopt
   vmx find                 The .vmx files on the datastores
-  vmx show VMX             Passthrough-related parameters of a VM
+  vmx show VMX             Passthrough-related parameters of a VM and its vCPU count
   vmx usb VMX ID...        VMX: usb.generic.allowHID and usb.quirks.deviceN
   vmx gpu VMX --rom FILE   VMX: pciPassthruN.opromEnabled, pciPassthruN.filename and
                            svga.present (N = 0, or chosen with -i N or --device ID)
@@ -381,6 +391,235 @@ vmx_write() {
     commit "$TMPF" "$VMX" "$2"
 }
 
+# ------------------------------------------------------------ licence ------
+# How many vCPUs a VM may have is decided by the licence: the free
+# "vSphere Hypervisor" licence allows 8 per VM, an evaluation or a paid one
+# has no such limit. 'vim-cmd vimsvc/license --show' is Broadcom's documented
+# way to read the licence in the ESXi Shell (KB 428537). A host in evaluation
+# mode reports:
+#
+#      serial: 00000-00000-00000-00000-00000
+#      vmodl key: eval
+#      name: Evaluation Mode
+#      total: 1
+#      used:  1
+#      unit: host
+#      Properties:
+#        [ProductName] = VMware ESX Server
+#        [expirationDate] = 2026-01-26T00:00:00Z
+#        [feature] = vsmp:0 ("Unlimited virtual SMP")
+#
+# The free hypervisor reports "name: vSphere 8 Hypervisor" with
+# "vsmp:8 ("Up to 8-way virtual SMP")" and no [expirationDate] line.
+
+# lic_load -> run the report once and keep its fields in LIC_* (LIC_OK stays
+# empty when there is no answer)
+lic_load() {
+    LIC_OK=''
+    LIC_REPORT=''
+    LIC_SERIAL=''
+    LIC_VMODL=''
+    LIC_NAME=''
+    LIC_TOTAL=''
+    LIC_USED=''
+    LIC_UNIT=''
+    LIC_EXPIRES=''
+    LIC_VSMP=''
+    LIC_DIAG=''
+    have vim-cmd || return 0
+    LIC_REPORT=$(vim-cmd vimsvc/license --show 2>&1) || return 0
+    [ -n "$LIC_REPORT" ] || return 0
+    while IFS='=' read -r _k _v; do
+        case $_k in
+            serial)  LIC_SERIAL=$_v ;;
+            vmodl)   LIC_VMODL=$_v ;;
+            name)    LIC_NAME=$_v ;;
+            total)   LIC_TOTAL=$_v ;;
+            used)    LIC_USED=$_v ;;
+            unit)    LIC_UNIT=$_v ;;
+            diag)    LIC_DIAG=$_v ;;
+            expires) LIC_EXPIRES=$_v ;;
+            vsmp)    LIC_VSMP=$_v ;;
+        esac
+    done <<EOF
+$(printf '%s\n' "$LIC_REPORT" | awk '
+    function value() {                     # the text after the first ":" or "="
+        v = $0
+        sub(/^[ \t]*[^:=]*[=:]/, "", v)
+        sub(/^[ \t]+/, "", v)
+        return v
+    }
+    { sub(/\r$/, "") }
+    /^ *[Ss]erial *:/          { serial = value() }
+    /^ *vmodl key *:/          { vmodl = value() }
+    /^ *name *:/               { if (name == "") name = value() }
+    /^ *total *:/              { total = value() }
+    /^ *used *:/               { used = value() }
+    /^ *unit *:/               { unit = value() }
+    /^ *\[diagnostic\]/        { diag = value() }
+    /^ *\[expirationDate\]/    { expires = value() }
+    /^ *\[feature\] *= *vsmp:/ { s = $0; sub(/.*vsmp:/, "", s); sub(/[^0-9].*/, "", s); vsmp = s }
+    END {
+        printf "serial=%s\nvmodl=%s\nname=%s\ntotal=%s\nused=%s\nunit=%s\n", \
+               serial, vmodl, name, total, used, unit
+        printf "diag=%s\nexpires=%s\nvsmp=%s\n", diag, expires, vsmp
+    }')
+EOF
+    [ -n "$LIC_SERIAL" ] && LIC_OK=1
+    return 0
+}
+
+# mask_key KEY -> "AAAAA-#####-#####-#####-EEEEE": a key is never printed in full
+mask_key() {
+    case $1 in
+        ?????-?????-?????-?????-?????) printf '%s-#####-#####-#####-%s\n' "${1%%-*}" "${1##*-}" ;;
+        *) printf '(hidden)\n' ;;
+    esac
+}
+
+# lic_is_eval -> 0 when the host runs in evaluation mode: the vmodl key is
+# 'eval', or the key consists of zeros only
+lic_is_eval() {
+    case $LIC_VMODL in eval) return 0 ;; esac
+    [ "$LIC_SERIAL" = 00000-00000-00000-00000-00000 ]
+}
+
+# lic_is_free -> 0 when the licence is the free "vSphere Hypervisor" edition
+lic_is_free() {
+    case $LIC_NAME in *[Hh]ypervisor*) return 0 ;; esac
+    return 1
+}
+
+# days_until YYYY-MM-DD -> whole days from today (UTC) until that date
+days_until() {
+    awk -v d="$1" -v now="$(date -u +%Y-%m-%d)" '
+        function days(s,  y, m, dd) {
+            y = substr(s, 1, 4) + 0; m = substr(s, 6, 2) + 0; dd = substr(s, 9, 2) + 0
+            y -= (m <= 2)
+            return 365 * y + int(y / 4) - int(y / 100) + int(y / 400) \
+                   + int((153 * (m + (m > 2 ? -3 : 9)) + 2) / 5) + dd
+        }
+        BEGIN { print days(d) - days(now) }'
+}
+
+# lic_expiry_days -> whole days until the licence expires, or nothing when the
+# report has no date that can be read
+lic_expiry_days() {
+    case $LIC_EXPIRES in
+        [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*) days_until "${LIC_EXPIRES%%T*}" ;;
+    esac
+    return 0
+}
+
+# lic_expires_text -> "never", "2026-01-26 (in 42 days)" or "2026-01-26 (3 days ago)"
+lic_expires_text() {
+    case $LIC_EXPIRES in
+        '')          printf 'never\n'; return 0 ;;
+        [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*) ;;
+        *)           printf '%s\n' "$LIC_EXPIRES"; return 0 ;;
+    esac
+    _d=${LIC_EXPIRES%%T*}
+    _days=$(lic_expiry_days)
+    case $_days in
+        ''|*[!0-9-]*) printf '%s\n' "$_d" ;;
+        0)            printf '%s (today)\n' "$_d" ;;
+        -*)           printf '%s (%s days ago)\n' "$_d" "${_days#-}" ;;
+        *)            printf '%s (in %s days)\n' "$_d" "$_days" ;;
+    esac
+    return 0
+}
+
+# lic_vcpu_limit -> vCPUs per VM that the licence allows; nothing when unlimited
+lic_vcpu_limit() {
+    case ${LIC_VSMP:-} in
+        ''|0) return 0 ;;
+    esac
+    printf '%s\n' "$LIC_VSMP"
+}
+
+# lic_print [full] -> the licence in a few lines
+lic_print() {
+    if [ -z "${LIC_OK:-}" ]; then
+        info "Licence:       not determined - 'vim-cmd vimsvc/license --show' gave no answer"
+        return 0
+    fi
+    _lim=$(lic_vcpu_limit)
+    info "Edition:       ${LIC_NAME:-unknown}"
+    info "Key:           $(mask_key "${LIC_SERIAL:-}")"
+    info "Expires:       $(lic_expires_text)"
+    [ -z "${1:-}" ] || info "Capacity:      ${LIC_USED:-0} of ${LIC_TOTAL:-0} ${LIC_UNIT:-} in use"
+    info "vCPUs per VM:  ${_lim:-unlimited}"
+    [ -z "$LIC_DIAG" ] || warn "$LIC_DIAG"
+    return 0
+}
+
+# lic_warnings -> what evaluation mode means for this host
+lic_warnings() {
+    lic_is_eval || return 0
+    _days=$(lic_expiry_days)
+    if [ -z "$_days" ]; then
+        warn "evaluation mode - no licence key is assigned."
+    elif [ "$_days" -lt 0 ]; then
+        warn "the evaluation period ended on ${LIC_EXPIRES%%T*}: no VM can be powered on until a licence is assigned."
+    elif [ "$_days" -eq 0 ]; then
+        warn "evaluation mode: the evaluation period ends today. From now on no VM can be powered on until a licence is assigned."
+    else
+        warn "evaluation mode: the host runs without limits until ${LIC_EXPIRES%%T*} (in $_days days)."
+        warn "From then on no VM can be powered on until a licence is assigned."
+    fi
+    warn "Assign a key under Host > Manage > Licensing > Assign license, or with '$PROG license set KEY'."
+    return 0
+}
+
+# lic_notes -> the limit of this licence in words
+lic_notes() {
+    _lim=$(lic_vcpu_limit)
+    [ -n "$_lim" ] || return 0
+    info "A VM with more than $_lim vCPUs cannot be powered on with this licence."
+    if lic_is_free; then
+        info "This is the free hypervisor licence; '$PROG status' lists the VMs above the limit."
+    fi
+    return 0
+}
+
+# vms_over_limit LIMIT -> the .vmx files on the datastores with more vCPUs than LIMIT
+vms_over_limit() {
+    [ -d "$ROOT$DATASTORES" ] || return 0
+    cmd_vmx_find | while IFS= read -r _vmx; do
+        _n=$(vmx_get "$_vmx" numvcpus) || continue
+        case $_n in ''|*[!0-9]*) continue ;; esac
+        if [ "$_n" -gt "$1" ]; then
+            printf '    %s  (%s vCPUs)\n' "$_vmx" "$_n"
+        fi
+    done
+}
+
+# vcpu_warning VMX : warn when the VM has more vCPUs than the licence allows
+vcpu_warning() {
+    _lim=$(lic_vcpu_limit)
+    [ -n "$_lim" ] || return 0
+    _n=$(vmx_get "$1" numvcpus) || return 0
+    case $_n in ''|*[!0-9]*) return 0 ;; esac
+    if [ "$_n" -gt "$_lim" ]; then
+        warn "$1 has $_n vCPUs, but this licence allows $_lim per VM - the VM will not power on."
+    fi
+    return 0
+}
+
+# spec_vcpu_warning SPEC : the same for a numvcpus line of a pending change
+spec_vcpu_warning() {
+    _lim=$(lic_vcpu_limit)
+    [ -n "$_lim" ] || return 0
+    while IFS='=' read -r _k _v; do
+        [ "$_k" = numvcpus ] || continue
+        case $_v in ''|*[!0-9]*) continue ;; esac
+        if [ "$_v" -gt "$_lim" ]; then
+            warn "with $_v vCPUs the VM will not power on - this licence allows $_lim per VM."
+        fi
+    done < "$1"
+    return 0
+}
+
 # ------------------------------------------------------ kernel settings ----
 
 # kopt_get SETTING -> its Value column in 'esxcli system settings kernel list' (empty if absent)
@@ -412,14 +651,32 @@ cmd_status() {
     [ "${1:-}" = "--all" ] && _all=1
     say "== ESXi host =="
     if have esxcli; then
-        esxcli system version get 2>/dev/null | awk -F ': *' \
-            '/^(Product|Version|Build|Update|Patch):/ { printf "    %-8s %s\n", $1 ":", $2 }'
+        _ver=$(esxcli system version get 2>/dev/null)
+        printf '%s\n' "$_ver" | awk -F ': *' '{ sub(/^[ \t]+/, "") } /^(Product|Version|Build|Update|Patch):/ \
+            { printf "    %-8s %s\n", $1 ":", $2 }'
+        _build=$(printf '%s\n' "$_ver" | awk -F ': *' '$1 ~ /^ *Build *$/ { print $2 }')
+        if [ "${_build##*-}" = "$FREE_BUILD" ]; then
+            info "         build $FREE_BUILD is the image of the free VMware vSphere Hypervisor (ESXi 8.0 U3e)."
+        fi
+        # Vendor and product of the host: on a Mac that ESXi 7.0 supported,
+        # macOS guests are built in and the unlocker is not needed.
+        _model=$(esxcli hardware platform get 2>/dev/null | awk -F ': *' '
+            tolower($1) ~ /^ *vendor/ && tolower($0) ~ /apple/ { apple = 1 }
+            tolower($1) ~ /^ *product name/ { p = $2 }
+            END { if (apple) print p }')
+        if [ -n "$_model" ]; then
+            info "         Apple hardware ($_model): see 'On a real Mac' in the guide."
+        fi
         say "== VMkernel boot options (a reboot applies them) =="
         kopt_show disableACSCheck "guide step 8: off"
         kopt_show vga "guide step 9: off"
     else
         warn "esxcli not found - this command is only useful on an ESXi host."
     fi
+    say "== Licence =="
+    lic_load
+    lic_print
+    lic_warnings
     say "== $BOOTCFG =="
     if [ -f "$ROOT$BOOTCFG" ]; then
         _k=$(grep '^kernelopt=' "$ROOT$BOOTCFG")
@@ -438,6 +695,18 @@ cmd_status() {
         say "== PCI devices  (PT = passthrough enabled, Cap = passthrough capable) =="
         pci_table "$_all"
         [ "$_all" -eq 1 ] || info "Only passthrough-capable devices are listed; 'status --all' lists every device."
+    fi
+    # Only a licence with a vCPU limit makes this list worth printing.
+    _lim=$(lic_vcpu_limit)
+    if [ -n "$_lim" ] && [ -d "$ROOT$DATASTORES" ]; then
+        say "== Virtual machines with more than $_lim vCPUs (they cannot be powered on) =="
+        _over=$(vms_over_limit "$_lim")
+        if [ -n "$_over" ]; then
+            printf '%s\n' "$_over"
+            warn "these VMs exceed the $_lim vCPUs that the licence allows per VM."
+        else
+            info "(none)"
+        fi
     fi
     return 0
 }
@@ -703,8 +972,10 @@ cmd_vmx_find() {
 cmd_vmx_show() {
     vmx_resolve "$1"
     say "$VMX:"
-    awk 'tolower($0) ~ /^[ \t]*(pcipassthru[0-9]+|svga\.present|usb|guestos|virtualhw\.version|firmware|ethernet0\.virtualdev)/' "$VMX" \
+    awk 'tolower($0) ~ /^[ \t]*(pcipassthru[0-9]+|svga\.present|usb|guestos|virtualhw\.version|firmware|ethernet0\.virtualdev|numvcpus)/' "$VMX" \
         | sed 's/^/    /'
+    lic_load
+    vcpu_warning "$VMX"
     return 0
 }
 
@@ -822,7 +1093,85 @@ cmd_vmx_set() {
     done
     say "$VMX:"
     vmx_preview "$SPEC"
+    lic_load
+    spec_vcpu_warning "$SPEC"
     vmx_write "$SPEC" "done."
+}
+
+cmd_license() {
+    case ${1:-} in
+        '')   lic_load; lic_print full; lic_warnings; lic_notes ;;
+        set)  shift; cmd_license_set "$@" ;;
+        *)    die "usage: $PROG license | license set KEY" ;;
+    esac
+    return 0
+}
+
+# cmd_license_set KEY : assign a key with 'vim-cmd vimsvc/license --set=KEY',
+# Broadcom's documented way to do it from the ESXi Shell (KB 381426)
+cmd_license_set() {
+    [ $# -eq 1 ] || die "usage: $PROG license set KEY   (KEY: five groups of five letters or digits)"
+    have vim-cmd || die "vim-cmd not found - run this on an ESXi host"
+    _key=$(printf '%s' "$1" | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]')
+    case $_key in
+        ?????-?????-?????-?????-?????) ;;
+        *) die "'$1' does not look like an ESXi licence key (five groups of five letters or digits)" ;;
+    esac
+    case $_key in
+        *[!A-Z0-9-]*) die "'$1' does not look like an ESXi licence key (five groups of five letters or digits)" ;;
+    esac
+
+    lic_load
+    say "Licence in use now:"
+    lic_print
+    say "Key to assign: $(mask_key "$_key")"
+    if [ "$_key" = "$LIC_SERIAL" ]; then
+        ok "nothing to do - this key is already assigned."
+        return 0
+    fi
+    confirm "Assign this key to the host?" || abort
+    if [ "$DRY_RUN" -eq 1 ]; then
+        say "[dry run] would run: vim-cmd vimsvc/license --set=$(mask_key "$_key")"
+        say "[dry run] nothing was changed."
+        return 0
+    fi
+
+    # The report is the only record of the key that was in use so far: keep it.
+    if [ -n "$LIC_OK" ]; then
+        lic_backup
+    fi
+    newtmp
+    vim-cmd vimsvc/license --set="$_key" > "$TMPF" 2>&1
+    grep -i '^ *\[diagnostic\]\|^ *Result:' "$TMPF" | sed 's/^ */    /'
+    lic_load
+    if [ "$_key" != "$LIC_SERIAL" ]; then
+        [ -s "$TMPF" ] || warn "vim-cmd gave no answer."
+        die "the key was not applied - see the lines above, or assign it in the Host Client:
+Host > Manage > Licensing > Assign license."
+    fi
+    ok "licence assigned."
+    lic_print full
+    lic_warnings
+    lic_notes
+    return 0
+}
+
+# lic_backup -> copy the licence report to 'license-report.bak.<timestamp>'
+# next to the script (in $ROOT when the test-suite sets one)
+lic_backup() {
+    _dir=${ROOT:-$(dirname "$0")}
+    _b="${_dir%/}/license-report.bak.$(date +%Y%m%d-%H%M%S)"
+    _n=1
+    while [ -e "$_b" ]; do
+        _n=$((_n + 1))
+        _b="${_dir%/}/license-report.bak.$(date +%Y%m%d-%H%M%S).$_n"
+    done
+    if printf '%s\n' "$LIC_REPORT" > "$_b"; then
+        say "  backup of the licence report so far: $_b"
+    else
+        warn "could not write $_b - the key in use so far is not recorded anywhere else."
+    fi
+    return 0
 }
 
 # ---------------------------------------------------------------- main -----
@@ -852,6 +1201,7 @@ CMD=${1:-}
 
 case $CMD in
     status)      cmd_status "$@" ;;
+    license)     cmd_license "$@" ;;
     acs-check)   cmd_acs_check "$@" ;;
     vga-console) cmd_vga_console "$@" ;;
     pci)         cmd_pci "$@" ;;

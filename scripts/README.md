@@ -2,21 +2,26 @@
 
 A single POSIX shell script that does the host-side editing of
 [the guide](../README.md) on the ESXi host itself: the VMkernel boot options,
-the passthrough switch, the three USB edits and the VMX parameters.
+the passthrough switch, the three USB edits and the VMX parameters. It also
+reads the host's licence, which decides how many vCPUs a VM may have.
 
 It is written for the shell ESXi actually ships — BusyBox `ash` with BusyBox
 `awk`, `sed` and `grep` — so it needs nothing installed: no Python, no bash,
-no packages.
+no packages. Nothing in it needs a paid licence: every command runs in the
+ESXi Shell, which the free *vSphere Hypervisor* licence (ESXi 8.0 U3e) leaves
+unrestricted.
 
 ## What it does, and what it leaves to you
 
 | It does | It does not |
 | --- | --- |
-| Show the host's state in one screen | Install or apply the unlocker |
+| Show the host's state and licence in one screen | Install or apply the unlocker |
 | Set `VMkernel.Boot.disableACSCheck` and `VMkernel.Boot.vga` | Add PCI or USB devices to a VM — that is done in the Host Client |
 | Switch passthrough on or off for a PCI device | Reboot the host |
 | List USB devices and their vendor:product IDs | Download or check a VBIOS |
 | Edit `/etc/vmware/config`, `/bootbank/boot.cfg` and a `.vmx` file | Touch anything inside macOS |
+| Warn about evaluation mode, and about VMs with more vCPUs than the licence allows | Print a licence key in full |
+| Assign a licence key you pass it | Use the remote vSphere API, which the free licence restricts |
 | Back up every file before it is touched | |
 
 ## Getting it onto the host
@@ -34,11 +39,14 @@ Run it as `sh esxi-pt.sh …` and it works regardless of file permissions.
 ## Commands
 
 `esxi-pt.sh --help` prints the full list. `ID` is a USB vendor:product ID,
-written as `05ac:0250` or `0x05ac:0x0250`.
+written as `05ac:0250` or `0x05ac:0x0250`. `KEY` is an ESXi licence key: five
+groups of five letters or digits.
 
 | Command | Guide | What it does |
 | --- | --- | --- |
-| `status [--all]` | — | ESXi version, both boot options, the `kernelopt` line, the host's `usb.quirks`, and the PCI devices with their passthrough state. Only passthrough-capable devices are listed; `--all` lists every device. |
+| `status [--all]` | — | ESXi version, licence, both boot options, the `kernelopt` line, the host's `usb.quirks`, and the PCI devices with their passthrough state. Only passthrough-capable devices are listed; `--all` lists every device. With a licence that limits vCPUs, the VMs above that limit are listed too. |
+| `license` | — | The host's licence: edition, key (masked), expiry date, capacity and the vCPUs allowed per VM |
+| `license set KEY` | — | Assigns a licence key, for instance the free hypervisor key; keeps a copy of the licence report first |
 | `acs-check on\|off` | Part 2, step 8 | `esxcli system settings kernel set -s disableACSCheck -v TRUE\|FALSE` |
 | `vga-console on\|off` | Part 2, step 9 | `esxcli system settings kernel set -s vga -v TRUE\|FALSE`; warns that the DCUI goes black |
 | `pci list` | Part 2, step 10 | The PCI device table of `status` |
@@ -47,7 +55,7 @@ written as `05ac:0250` or `0x05ac:0x0250`.
 | `usb host-allow ID…` | Part 3, step 2 | Appends `usb.quirks.deviceN = "0xID allow"` to `/etc/vmware/config` |
 | `usb host-ignore ID…` | Part 3, step 3 | Adds the devices to `CONFIG./USB/quirks=` on the `kernelopt` line of `/bootbank/boot.cfg` |
 | `vmx find` | — | Lists the `.vmx` files on the datastores |
-| `vmx show VMX` | — | Prints the passthrough-related parameters of a VM |
+| `vmx show VMX` | — | The passthrough-related parameters of a VM and its vCPU count |
 | `vmx usb VMX ID…` | Part 3, step 4 | Sets `usb.generic.allowHID = "TRUE"` and adds `usb.quirks.deviceN` entries |
 | `vmx gpu VMX --rom FILE` | Part 2, steps 12, 15–16 | Sets `pciPassthruN.opromEnabled`, `pciPassthruN.filename` and `svga.present = "FALSE"` |
 | `vmx get VMX KEY` | — | Prints one parameter's value |
@@ -69,6 +77,10 @@ sh esxi-pt.sh vmx gpu "/vmfs/volumes/VM Storage/OSX Monterey/OSX Monterey.vmx" \
 # … or for the GPU that was added second
 sh esxi-pt.sh vmx gpu "/vmfs/volumes/VM Storage/OSX Monterey/OSX Monterey.vmx" \
     --device 1002:67df --rom ../Powercolor.RX480.8192.160923.rom
+
+# the licence of the host, and the free hypervisor key for a host that lacks it
+sh esxi-pt.sh license
+sh esxi-pt.sh license set XXXXX-XXXXX-XXXXX-XXXXX-XXXXX
 ```
 
 `vmx gpu` writes to `pciPassthru0` by default. If the GPU is not the first PCI
@@ -86,7 +98,24 @@ Options go before the command.
 | `-f`, `--force` | Edit the VMX although a lock directory exists next to it. |
 | `--quirk NAME` | Kernel quirk for `usb host-ignore`. Default `UQ_KBD_IGNORE`. |
 | `--rev LOW:HIGH` | Revision range for new quirks. Default `0x0000:0xffff`, as in the guide. Broadcom's own articles use `:0xffff`. |
-| `--root DIR` | Prefix for `/etc` and `/bootbank`. Used by the test-suite; never needed on a host. |
+| `--root DIR` | Prefix for `/etc` and `/bootbank`, and where the copy of the licence report goes. Used by the test-suite; never needed on a host. |
+
+## The free hypervisor
+
+ESXi 8.0 U3e (build 24677879) is the free *VMware vSphere Hypervisor*. Three
+things in the script are there for it:
+
+- `status` names the build as the free image and reads the licence, so an
+  edition other than *vSphere Hypervisor* is noticed.
+- A licence with a limit — 8 vCPUs per VM with the free one — is checked
+  before `vmx set` gives a VM more vCPUs, in `vmx show`, and against every
+  `.vmx` on the datastores in `status`. A VM above the limit can be configured
+  but does not power on.
+- A host that was *upgraded* to the free image does not get its embedded key
+  and runs in evaluation mode instead. `status` and `license` warn about that
+  and count the days; `license set KEY` assigns a key. Which key you may assign
+  is for you to judge — see
+  [ESXi licensing today](../README.md#esxi-licensing-today) in the guide.
 
 ## How it edits
 
@@ -103,6 +132,12 @@ Options go before the command.
   parameter is replaced where it stands, a new one is appended, and none is
   duplicated. A VM with a lock directory (`NAME.vmx.lck`) next to its VMX is
   left alone unless `--force` is given — power it off first.
+- **Licence.** The report of `vim-cmd vimsvc/license --show`, Broadcom's
+  documented way to read the licence in the ESXi Shell (KB 428537), gives the
+  edition, the expiry date and the vCPU limit. A key is only ever printed as
+  `AAAAA-#####-#####-#####-EEEEE`. Before `license set` replaces the licence,
+  the report of the one in use so far — the only record of that key on the
+  host — is kept as `license-report.bak.<timestamp>` next to the script.
 - **Repeatable.** Running a command again is a no-op ("nothing to do").
 - **Reversible.** `usb host-allow --remove ID…` and `usb host-ignore --remove ID…`
   take devices back out.
@@ -119,9 +154,9 @@ has to be re-applied as well, see
 
 ## How it is tested — and what is not
 
-`tests/run.sh` points the script at a sandbox (`--root`) and at fake `esxcli`
-and `lsusb` commands, then checks every command's output, exit status, the
-resulting files and the backups. It passes under:
+`tests/run.sh` points the script at a sandbox (`--root`) and at fake `esxcli`,
+`lsusb` and `vim-cmd` commands, then checks every command's output, exit
+status, the resulting files and the backups. It passes under:
 
 - BusyBox `ash` with BusyBox `awk` — the closest stand-in for ESXi's shell
 - `dash`, `bash`, and the `awk` of BusyBox, BSD and mawk
@@ -136,11 +171,17 @@ from Broadcom's documentation, and the following could differ on real hardware:
   `Configured Owner` and `Passthru Capable` fields) and of `lsusb -v`,
 - the output of `esxcli system settings kernel list` for the `vga` and
   `disableACSCheck` rows,
-- whether `esxcli hardware pci pcipassthru` exists on your build (ESXi 7.0+).
+- whether `esxcli hardware pci pcipassthru` exists on your build (ESXi 7.0+),
+- the exact layout of `vim-cmd vimsvc/license --show` (the script reads its
+  `serial`, `name`, `[expirationDate]` and `vsmp` lines; the fake reports are
+  modelled on public screenshots of ESXi 8.0) and whether `--set=` answers as
+  Broadcom's KB 381426 shows,
+- the vendor line of `esxcli hardware platform get`, which `status` reads to
+  recognise a Mac.
 
 Start with `--dry-run`. If something looks wrong, please open an issue with the
-output of `esxi-pt.sh status` (with addresses and names removed) and your ESXi
-build number.
+output of `esxi-pt.sh status` and `esxi-pt.sh license` (with addresses, names
+and keys removed — the script masks keys) and your ESXi build number.
 
 ## Running the tests locally
 
