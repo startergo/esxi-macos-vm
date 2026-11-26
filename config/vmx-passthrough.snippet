@@ -1,0 +1,31 @@
+# Parameters this guide adds to the VM's .vmx file  (shell syntax: key = "value")
+# ---------------------------------------------------------------------------
+# In the ESXi Host Client (VM > Edit settings > VM Options > Advanced >
+# Configuration Parameters) the same parameters are typed as name and value,
+# without quotes and without the equals sign.
+#
+# Edit the file by hand only while the VM is powered off, and keep a copy of
+# it first. Lines starting with # are notes: do not copy them into the file.
+# ---------------------------------------------------------------------------
+
+# Part 2, step 12: no virtual video card. The VM console stops working here;
+# Screen Sharing and the real GPU take over.
+svga.present = "FALSE"
+
+# Part 2, step 11: the GPU, added in the Host Client as "PCI Device". The Host
+# Client writes these three lines itself when the device is added; they are
+# shown for context only. pciPassthru0 is the first PCI device of the VM -
+# match the number to the entry that holds your GPU.
+pciPassthru0.present = "TRUE"
+pciPassthru0.deviceId = "0x67df"
+pciPassthru0.vendorId = "0x1002"
+
+# Part 2, steps 15 and 16: hand the GPU its VBIOS. The path is relative to the
+# VM's folder, so ../ is the root of the datastore.
+pciPassthru0.opromEnabled = "TRUE"
+pciPassthru0.filename = "../Powercolor.RX480.8192.160923.rom"
+
+# Part 3, step 4: USB keyboard and mouse. The same IDs as in /etc/vmware/config.
+usb.generic.allowHID = "TRUE"
+usb.quirks.device0 = "0x05ac:0x0250 allow"
+usb.quirks.device1 = "0x046d:0xc52b allow"

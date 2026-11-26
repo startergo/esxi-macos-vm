@@ -1,0 +1,25 @@
+# /bootbank/boot.cfg on the ESXi host
+# USB keyboard / mouse passthrough, guide part 3, step 3
+#
+# Do NOT copy this file over your own boot.cfg: the modules= and build= lines
+# belong to the author's host (ESXi 7.0 U3g). Only the kernelopt= line is the
+# example. Lines starting with # are notes.
+#
+# The kernelopt line is stock except for the token appended to it after one
+# space: CONFIG./USB/quirks=...  Everything else on the line stays as it is.
+# Several devices are chained with colons, each written as
+#     vendor:device:minRevision:maxRevision:quirk
+#
+# Or let the script do it:  esxi-pt.sh usb host-ignore 05ac:0250 046d:c52b
+# Undo:                     esxi-pt.sh usb host-ignore --remove 05ac:0250 046d:c52b
+# Reboot the host afterwards, and re-check the line after every ESXi update.
+
+bootstate=0
+title=Loading VMware ESXi
+timeout=5
+prefix=
+kernel=b.b00
+kernelopt=autoPartition=FALSE CONFIG./USB/quirks=0x05ac:0x0250:0x0000:0xffff:UQ_KBD_IGNORE:0x046d:0xc52b:0x0000:0xffff:UQ_KBD_IGNORE
+modules=jumpstrt.gz --- useropts.gz --- features.gz --- k.b00 --- uc_intel.b00 --- uc_amd.b00 --- uc_hygon.b00 --- procfs.b00 --- vmx.v00 --- vim.v00
+build=7.0.3-0.55.20328353
+updated=1

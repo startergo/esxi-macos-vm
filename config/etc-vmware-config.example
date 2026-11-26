@@ -1,0 +1,17 @@
+# /etc/vmware/config on the ESXi host
+# USB keyboard / mouse passthrough, guide part 3, step 2
+#
+# Lines starting with # are notes: do not copy them into the file.
+#
+# Append one line per device, numbered from 0. 0x05ac:0x0250 and 0x046d:0xc52b
+# are the author's keyboard and Logitech receiver - replace them with the IDs
+# of your own devices (esxi-pt.sh usb list). Reboot the host afterwards.
+#
+# Or let the script do it:  esxi-pt.sh usb host-allow 05ac:0250 046d:c52b
+# Undo:                     esxi-pt.sh usb host-allow --remove 05ac:0250 046d:c52b
+#
+# The first line is what a stock file contains; it is listed only for context.
+
+libdir = "/usr/lib/vmware"
+usb.quirks.device0 = "0x05ac:0x0250 allow"
+usb.quirks.device1 = "0x046d:0xc52b allow"

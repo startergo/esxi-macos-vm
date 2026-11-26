@@ -1,0 +1,19 @@
+# local editor and assistant settings
+.claude/settings.local.json
+.vscode/
+.idea/
+.DS_Store
+
+# never commit real VM configurations, firmware dumps, installers or backups
+*.vmx
+*.vmxf
+*.nvram
+*.vmsd
+*.rom
+*.iso
+*.bak
+*.bak.*
+backups/
+
+# test artefacts
+/esxi-pt-test.*/
