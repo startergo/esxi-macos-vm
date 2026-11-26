@@ -158,9 +158,12 @@ warn that Ventura guests boot-loop with the emulated `e1000e` adapter.
 ### 6. Install macOS and VMware Tools
 
 Install from the ISO. Then get VMware Tools for macOS and install it by hand: attach the
-`darwin.iso` image to the VM's CD/DVD drive and run *Install VMware Tools* inside macOS. The
-image is published with Broadcom's frozen legacy tools — see
-[Status of the unlocker](#status-of-the-unlocker).
+`darwin.iso` image to the VM's CD/DVD drive and run *Install VMware Tools* inside macOS.
+
+The last version is **VMware Tools 12.1.1 (build 22484250)**. Two identical copies exist:
+Broadcom's [frozen legacy tools](https://packages-prod.broadcom.com/tools/frozen/)
+(`darwin/darwin.iso`) and the `iso/` folder of [`DrDonk/unlocker`](https://github.com/DrDonk/unlocker).
+Both have the SHA-256 `e0c96286f376b30e2c2362bd991709f0f6bc6ebd911be4056a58da8698c49236`.
 
 ### 7. Turn on Screen Sharing
 
@@ -454,6 +457,10 @@ the ones documented above, but treat your first run as a test and start with `--
   maintenance mode and shut it down too. Not covered here.
 - **DisplayPort.** Whether passthrough works over DisplayPort is unverified; the author only
   tested HDMI.
+- **The end of the line is in sight.** Broadcom has ended Mac platform support with ESXi 7.0.x,
+  VMware has deprecated macOS guests, and Apple drops Intel with macOS 27 — which makes macOS 26
+  Tahoe the last macOS that can run in a VM of this kind at all (DrDonk's unlocker README,
+  August 2026).
 
 ## Status of the unlocker
 
@@ -498,11 +505,16 @@ What applies to both generations:
   compatibility. The Unlocker 4 mirror reports that macOS guests stop booting on updated ESXi 8
   hosts unless VMs are kept that way. Nothing is known to work on ESXi 8.0 U1 or later, or on 9.x.
 - **VMware has moved on.** ESXi 7.0.x is the last release that supports Apple Mac hardware,
-  and VMware Tools for macOS are in maintenance mode (Broadcom KB 313785). The last `darwin.iso`
-  is published under Broadcom's
-  [frozen legacy tools](https://packages-prod.broadcom.com/tools/frozen/) (`darwin/darwin.iso`);
-  the provenance is documented in a
+  and VMware Tools for macOS are in maintenance mode (Broadcom KB 313785). The provenance of
+  the final `darwin.iso` is documented in a
   [Broadcom community thread](https://community.broadcom.com/vmware-cloud-foundation/discussion/download-links-for-frozen-legacy-vmware-tools-1).
+
+**Not to be confused with [`DrDonk/unlocker`](https://github.com/DrDonk/unlocker).** That
+repository is alive (v4.2.8, May 2026), but it is the unlocker for **Workstation and Player**
+on Windows and Linux: it has no ESXi target and does not patch an ESXi host. Its README points
+to [OC4VM](https://github.com/DrDonk/OC4VM), an OpenCore image that runs macOS guests in Fusion
+and Workstation without patching anything — and OC4VM's README states that ESXi is not
+supported. For an ESXi host, Unlocker 3 or 4 on ESXi 7 remains the only known way.
 
 ## ESXi licensing today
 
@@ -544,6 +556,8 @@ guide is known to work on.
 - [Archived README of DrDonk/esxi-unlocker](https://web.archive.org/web/20250620183232/https://github.com/DrDonk/esxi-unlocker)
 - [Unlocker v3 for ESXi, announcement thread](https://www.insanelymac.com/forum/topic/335756-macos-unlocker-v30-for-vmware-esxi) (Secure Boot)
 - Broadcom KB [313785](https://knowledge.broadcom.com/external/article/313785/discontinuation-of-support-for-apple-mac.html) — end of Mac platform support
+- [`DrDonk/unlocker`](https://github.com/DrDonk/unlocker) — the Workstation/Player unlocker; still maintained, and the source of the notes on the deprecation of macOS guests
+- [OC4VM — OpenCore for VMware](https://github.com/DrDonk/OC4VM) — macOS guests for Fusion and Workstation without patching; ESXi not supported
 
 **Licensing**
 
